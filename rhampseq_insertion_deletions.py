@@ -291,7 +291,7 @@ def main():
     for idx, read in enumerate(bamfile.fetch(contig, start, end, until_eof=True)):
         dict_reads[read.query_name].append(idx)
 
-
+    #Create chunks of ~5000 reads
     #Now we have the reads, mate pair and their indices, we can chunk them
     chunks = chunk_positions(list(dict_reads.values()), 2500)
 
