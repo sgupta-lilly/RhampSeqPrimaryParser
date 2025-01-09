@@ -313,7 +313,7 @@ def main():
         # Collect the results
         all_dfs = []
         for future in as_completed(future_to_chunk):
-            print(future.result())
+            #print(future.result())
             # Group by 'Query_Name' and apply the concatenation function
             result_df = future.result()
             result_df = restructure_paired_end(result_df)
