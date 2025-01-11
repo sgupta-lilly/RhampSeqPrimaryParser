@@ -26,7 +26,6 @@ def count_mismatches(read):
 def extract_indels_and_mismatches(read):
     """
     Extracts insertions (I), deletions (D), and mismatches (X) from CIGAR and MD tags.
-    Handles reverse strand alignment by adjusting coordinates.
     """
     # Initialize output dictionary
     indels_mismatches = {'I': [], 'D': [], 'X': []}
