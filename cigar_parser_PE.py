@@ -181,7 +181,7 @@ def process_reads(bamfile_path, sample, chunk):
     # Initialize DataFrame for results
     columns = [
         "Query_Name", "ReadReferenceId", "Reference_Start", "Reference_End", "CIGAR_String", "Orientation",
-         "Insertions", "Deletions", "Mismatches", "Sequence", "Read_1", "Read_2", "INS_QC", "DEL_QC", "ReadQualities", "ReferencePosition"
+         "Insertions", "Deletions", "Mismatches", "Sequence", "INS_QC", "DEL_QC", "ReadQualities", "ReferencePosition"
        
     ]
     df = pd.DataFrame(columns=columns)  # Initialize an empty DataFrame
@@ -221,8 +221,6 @@ def process_reads(bamfile_path, sample, chunk):
                     "Deletions": read_indels['D'],
                     "Mismatches": read_indels['X'],
                     "Sequence": read.query_sequence,
-                    "Read_1": read.is_read1,
-                    "Read_2": read.is_read2,
                     "INS_QC": INS_QC,
                     "DEL_QC": DEL_QC,
                     "ReadQualities": read_quality,
@@ -250,10 +248,12 @@ def main():
     # Split BAM based on depth, now we get chunks containing reads and mate indices
     bamfile = pysam.AlignmentFile(bamfile_path, "rb")
     dict_reads = defaultdict(list)
-    
+  
+
     # Fetch reads and store their indices
     for idx, read in enumerate(bamfile.fetch(until_eof=True)):
         dict_reads[read.query_name].append(idx)
+    read_pair_count = len(dict_reads)
 
     #Create Chunks of ~5000 reads
     #Now we have the reads, mate pair and their indices, we can chunk them
@@ -265,7 +265,7 @@ def main():
 
     num_processes = 8  # Adjust based on your CPU
     
-
+    wt_reads = 0
     # Process_reads in Chunks
     #print(f"Processing reads from {chunk_starts} to {chunk_ends}")
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
@@ -296,16 +296,17 @@ def main():
 
 
             # Add excluded_count as a column to all rows
-            result_df['Excluded_Count'] = excluded_count
+            #result_df['Excluded_Count'] = excluded_count
    
             #result_df = restructure_paired_end(result_df)
             # add the merge status
             #result_df = process_merge_for_reads(result_df)
             all_dfs.append(result_df)
-
+            wt_reads = wt_reads +  excluded_count
     # Concatenate all DataFrames
     final_df = pd.concat(all_dfs, ignore_index=True)
-    
+    final_df['WildCount'] = wt_reads
+    final_df['AlignedPairs'] = read_pair_count
 
     # Display the resulting DataFrame
     # Save the result to a file
