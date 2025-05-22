@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-## version 1.0 (05/06/2025, Simone Gupta)
-
+## version 1.2 (05/22/2025, Simone Gupta)
+## added Process only Primary alignment 
+## Deal with deduplicating insertions same reference position multiple times. This can happen in complex CIGAR strings (like 3I6M1D4M2I5M) when insertions are adjacent or overlap in the read, but the reference position is not incremented after an insertion (I doesn't move the reference position)
 import pysam
 import sys
 import pandas as pd
