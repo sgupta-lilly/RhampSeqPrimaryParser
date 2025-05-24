@@ -2,7 +2,9 @@
 ## version 2.0 (05/23/2025, Simone Gupta)
 ## Insertion report <ref_pos>:<length>:<average base quality>:<average phred error>
 ## added Process only Primary alignment 
-## Deal with deduplicating insertions same reference position multiple times. This can happen in complex CIGAR strings (like 3I6M1D4M2I5M) when insertions are adjacent or overlap in the read, but the reference position is not incremented after an insertion (I doesn't move the reference position)
+## Deduplicating insertions same reference position multiple times. This can happen in complex CIGAR strings (like 3I6M1D4M2I5M) when insertions are adjacent or overlap in the read, but the reference position is not incremented after an insertion (I doesn't move the reference position)
+#!/usr/bin/env python3
+## version 1.0 (05/06/2025, Simone Gupta)
 
 import pysam
 import sys
@@ -45,6 +47,8 @@ def classify_read(read_edit_quality, quality_threshold=29):
                 classify_IDX[key].append(f"{key}_Low")
     return classify_IDX    
 
+import re
+
 def extract_indels_and_mismatches(read):
     indels_mismatches = {'I': [], 'D': [], 'X': []}
     read_edit_quality = {'I': [], 'D': [], 'X': []}
@@ -60,8 +64,12 @@ def extract_indels_and_mismatches(read):
         elif cigar_op == 1:  # Insertion
             qual = base_qualities[read_pos:read_pos + length] if base_qualities else [None] * length
             error_P = [10 ** (-q / 10) if q is not None else None for q in qual]
-            indels_mismatches['I'].append((ref_pos, length, qual, error_P))
-            read_edit_quality['I'].append(min(qual) if qual else None)
+
+            avg_qual = round(sum(qual) / len(qual), 2) if qual else None
+            avg_errP = round(sum(error_P) / len(error_P), 5) if error_P else None
+
+            indels_mismatches['I'].append((ref_pos, length, avg_qual, avg_errP))
+            read_edit_quality['I'].append(avg_qual)
             read_pos += length
         elif cigar_op == 2:  # Deletion
             qual = base_qualities[read_pos - 1] if read_pos > 0 and base_qualities else None
@@ -99,21 +107,15 @@ def format_indels(indels):
     formatted = {}
     for type_ in ['I', 'D', 'X']:
         formatted[type_] = []
-        seen = set()
-        for pos, length, quality, error_P in indels[type_]:
-            if type_ == 'I':
-                for i in range(length):
-                    q = quality[i] if i < len(quality) else None
-                    ep = error_P[i] if i < len(error_P) else None
-                    entry = f"{pos + i}:1:{q}:{ep}"
-                    if entry not in seen:
-                        seen.add(entry)
-                        formatted[type_].append(entry)
-            else:
-                entry = f"{pos}:{length}:{quality}:{error_P}"
-                if entry not in seen:
-                    seen.add(entry)
-                    formatted[type_].append(entry)
+        seen_positions = set()
+
+        for pos, length, qual, error_P in indels[type_]:
+            if pos in seen_positions:
+                continue
+            seen_positions.add(pos)
+
+            formatted[type_].append(f"{pos}:{length}:{qual}:{error_P}")
+
         formatted[type_] = ";".join(formatted[type_])
     return formatted
 
@@ -166,28 +168,59 @@ def chunk_positions(values, chunk_size):
         yield flat_positions[i:i + chunk_size]
 
 def main():
-    bamfile_path = sys.argv[1]
+    bamfile_path = sys.argv[1]  # Path to BAM file
     sample = sys.argv[2]
 
+    
+    # Split BAM based on depth, now we get chunks containing reads and mate indices
     bamfile = pysam.AlignmentFile(bamfile_path, "rb")
     dict_reads = defaultdict(list)
+  
+
+    # Fetch reads and store their indices
     for idx, read in enumerate(bamfile.fetch(until_eof=True)):
         dict_reads[read.query_name].append(idx)
-    bamfile.close()
+    read_pair_count = len(dict_reads)
 
     chunks = list(chunk_positions(list(dict_reads.values()), 2500))
-    num_processes = 8
 
-    final_df = pd.DataFrame()
+    num_processes = 8  # Adjust based on your CPU
+    
+    wt_reads = 0
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
-        futures = {executor.submit(process_reads, bamfile_path, sample, chunk): chunk for chunk in chunks}
-        for future in as_completed(futures):
-            df_chunk = future.result()
-            final_df = pd.concat([final_df, df_chunk], ignore_index=True)
+        future_to_chunk = {executor.submit(process_reads, bamfile_path, sample, chunk): (chunk) 
+                           for chunk in (chunks)}
+        
+        # Collect the results
+        all_dfs = []
+        for future in as_completed(future_to_chunk):
+            #print(future.result())
+            # Group by 'Query_Name' and apply the concatenation function
+            result_df = future.result()
+            result_df['Mismatches'] = result_df['Mismatches'].fillna('').astype(str).str.strip()
 
-    output_file = f"{sample}_read_summary.csv"
-    final_df.to_csv(output_file, index=False)
-    print(f"Finished. Output saved to: {output_file}")
+            # Filter the DataFrame
+            excluded_mask = (
+            (result_df['INS_QC'] == 'I_NA') & 
+            (result_df['DEL_QC'] == 'D_NA') & 
+            (result_df['Mismatches'] == '')
+            )
+            excluded_count = excluded_mask.sum()  # Number of rows excluded
 
+            result_df = result_df[~excluded_mask]
+            all_dfs.append(result_df)
+            wt_reads = wt_reads +  excluded_count
+    # Concatenate all DataFrames
+    final_df = pd.concat(all_dfs, ignore_index=True)
+    final_df['WildCount'] = wt_reads
+    final_df['AlignedPairs'] = read_pair_count
+
+    # Display the resulting DataFrame
+    # Save the result to a file
+    outfile = f"{sample}_snp_indel.output_data.tsv"
+    out_dir = os.getcwd()
+    outfile = os.path.join(out_dir, outfile)
+    final_df.to_csv(outfile, sep='\t', index=False)
+    print(f"Output saved to {outfile}")
 if __name__ == "__main__":
     main()
