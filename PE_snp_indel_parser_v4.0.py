@@ -17,6 +17,20 @@ import sys
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+
+def is_valid_primary_read(read):
+    tags = dict(read.tags)
+    if tags.get('tp') != 'P':
+        return False
+    if read.is_unmapped or read.query_sequence is None:
+        return False
+    if tags.get('NM', 0) > 20:
+        return False
+    if read.query_sequence.count("N") > 3 or read.mapping_quality < 30:
+        return False
+    return True
+
+
 def count_mismatches(read):
     md = dict(read.tags).get('MD')
     return sum(1 for char in md if char.isalpha() and char != '^') if md else 0
@@ -124,15 +138,8 @@ def process_reads(bamfile_path, sample, chunk_query_names):
     for read in bamfile.fetch(until_eof=True):
         if read.query_name not in chunk_query_names_set:
             continue
-
-        tags = dict(read.tags)
-        if tags.get('tp') != 'P' or read.is_unmapped or read.query_sequence is None:
+        if not is_valid_primary_read(read):
             continue
-        if tags.get('NM', 0) > 20:
-            continue
-        if read.query_sequence.count("N") > 3 or read.mapping_quality < 30:
-            continue
-
         orientation = "reverse" if read.is_reverse else "forward"
         indels_mismatches, qc_indel = extract_indels_and_mismatches(read)
         INS_QC, DEL_QC = format_qcindel(qc_indel)
@@ -190,15 +197,10 @@ def main():
     unique_query_names = set()
 
     for read in bamfile.fetch(until_eof=True):
-        tags = dict(read.tags)
-        if tags.get('tp') != 'P' or read.is_unmapped or read.query_sequence is None:
-            continue
-        if tags.get('NM', 0) > 20:
-            continue
-        if read.query_sequence.count("N") > 3 or read.mapping_quality < 30:
+        if not is_valid_primary_read(read):
             continue
         unique_query_names.add(read.query_name)
-
+    
     bamfile.close()
     unique_query_names = list(unique_query_names)
     read_pair_count = len(unique_query_names)
